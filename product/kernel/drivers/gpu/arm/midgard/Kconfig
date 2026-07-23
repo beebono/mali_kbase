@@ -169,19 +169,9 @@ config MALI_CORESIGHT
 	bool "Enable Kbase CoreSight tracing support"
 	default n
 
-menuconfig MALI_EXPERT
-	depends on MALI_MIDGARD
-	bool "Enable Expert Settings"
-	default n
-	help
-	  Enabling this option and modifying the default settings may produce
-	  a driver with performance or other limitations.
-
-if MALI_EXPERT
-
 config LARGE_PAGE_SUPPORT
 	bool "Support for 2MB page allocations"
-	depends on MALI_MIDGARD && MALI_EXPERT
+	depends on MALI_MIDGARD
 	default y
 	help
 	 Rather than allocating all GPU memory page-by-page, allow the system
@@ -193,6 +183,16 @@ config LARGE_PAGE_SUPPORT
 	 This depends on GPU support.
 
 	 If in doubt, say Y.
+
+menuconfig MALI_EXPERT
+	depends on MALI_MIDGARD
+	bool "Enable Expert Settings"
+	default n
+	help
+	  Enabling this option and modifying the default settings may produce
+	  a driver with performance or other limitations.
+
+if MALI_EXPERT
 
 config MALI_CORESTACK
 	bool "Enable support of GPU core stack power control"

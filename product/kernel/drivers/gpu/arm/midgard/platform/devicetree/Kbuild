@@ -16,6 +16,10 @@
 # along with this program; if not, you can access it online at
 # http://www.gnu.org/licenses/gpl-2.0.html.
 #
+# Enable runtime PM so pm_callback_power_on uses pm_runtime_get_sync to gate
+# register access behind genpd, ensuring the GPU power domain is up first.
+ccflags-y += -DKBASE_PM_RUNTIME
+
 #
 
 mali_kbase-y += \

@@ -141,7 +141,7 @@
  * This is dependent on support for of_property_read_u64_array() in the
  * kernel.
  */
-#define BASE_MAX_NR_CLOCKS_REGULATORS (2)
+#define BASE_MAX_NR_CLOCKS_REGULATORS (4)
 
 /* Forward declarations */
 struct kbase_context;

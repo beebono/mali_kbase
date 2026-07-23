@@ -23,11 +23,69 @@
 #include <mali_kbase_defs.h>
 #include <device/mali_kbase_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/reset.h>
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/regulator/consumer.h>
 
 #include "mali_kbase_config_platform.h"
+
+static struct reset_control **resets;
+static int nr_resets;
+
+static void resets_init(struct kbase_device *kbdev)
+{
+	struct device_node *np;
+	int i;
+
+	np = kbdev->dev->of_node;
+
+	nr_resets = of_count_phandle_with_args(np, "resets", "#reset-cells");
+	if (nr_resets <= 0) {
+		nr_resets = 0;
+		return;
+	}
+
+	resets = devm_kcalloc(kbdev->dev, (size_t)nr_resets, sizeof(*resets),
+			      GFP_KERNEL);
+	if (!resets) {
+		nr_resets = 0;
+		return;
+	}
+
+	for (i = 0; i < nr_resets; i++) {
+		resets[i] = devm_reset_control_get_exclusive_by_index(
+				kbdev->dev, i);
+		if (IS_ERR(resets[i])) {
+			dev_warn(kbdev->dev,
+				 "Failed to get GPU reset %d, skipping resets\n",
+				 i);
+			resets = NULL;
+			nr_resets = 0;
+			return;
+		}
+	}
+}
+
+static int pm_callback_soft_reset(struct kbase_device *kbdev)
+{
+	int i;
+
+	if (resets) {
+		for (i = 0; i < nr_resets; i++)
+			reset_control_assert(resets[i]);
+
+		udelay(10);
+
+		for (i = 0; i < nr_resets; i++)
+			reset_control_deassert(resets[i]);
+
+		udelay(10);
+	}
+
+	/* Return 0 to let the normal soft reset sequence proceed */
+	return 0;
+}
 
 /*
  * When CONFIG_PM_CLK is active, the genpd framework calls
@@ -211,7 +269,13 @@ static int kbase_device_runtime_init(struct kbase_device *kbdev)
 	pm_runtime_set_autosuspend_delay(kbdev->dev, AUTO_SUSPEND_DELAY);
 	pm_runtime_use_autosuspend(kbdev->dev);
 
-	pm_runtime_set_active(kbdev->dev);
+	/*
+	 * Use set_suspended (not set_active) so the first pm_runtime_get_sync
+	 * actually calls through to genpd and powers on the domain. set_active
+	 * marks the device as already on, causing get_sync to return immediately
+	 * before hardware is ready, leading to an SError on first register write.
+	 */
+	pm_runtime_set_suspended(kbdev->dev);
 	pm_runtime_enable(kbdev->dev);
 
 	if (!pm_runtime_enabled(kbdev->dev)) {
@@ -222,6 +286,9 @@ static int kbase_device_runtime_init(struct kbase_device *kbdev)
 			 __func__, atomic_read(&kbdev->dev->power.usage_count));
 		ret = -EINVAL;
 	}
+
+	if (!ret)
+		resets_init(kbdev);
 
 	return ret;
 }
@@ -274,6 +341,7 @@ struct kbase_pm_callback_conf pm_callbacks = {
 	.power_on_callback = pm_callback_power_on,
 	.power_off_callback = pm_callback_power_off,
 	.power_suspend_callback = pm_callback_suspend,
+	.soft_reset_callback = pm_callback_soft_reset,
 	.power_resume_callback = pm_callback_resume,
 #ifdef KBASE_PM_RUNTIME
 	.power_runtime_init_callback = kbase_device_runtime_init,
