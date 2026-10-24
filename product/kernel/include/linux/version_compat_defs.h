@@ -427,4 +427,11 @@ kbase_mm_get_unmapped_area_helper(struct mm_struct *mm, struct file *filp, unsig
 #endif
 }
 
+/* Since 6.17 a workqueue says whether it is per-CPU or unbound, and 7.x warns
+ * when it says neither. Before WQ_PERCPU existed, per-CPU was the default.
+ */
+#if (KERNEL_VERSION(6, 17, 0) > LINUX_VERSION_CODE)
+#define WQ_PERCPU 0
+#endif
+
 #endif /* _VERSION_COMPAT_DEFS_H_ */
