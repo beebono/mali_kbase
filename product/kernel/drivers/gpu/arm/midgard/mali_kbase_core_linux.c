@@ -4624,8 +4624,11 @@ int power_control_init(struct kbase_device *kbdev)
 	 * operating with a partial initialization of regulators.
 	 */
 	k = 0;
-	for (i = 0; i < BASE_MAX_NR_CLOCKS_REGULATORS; i++) {
-		const char *id = (i < ARRAY_SIZE(regulator_names)) ? regulator_names[i] : NULL;
+	/* Only the named entries: a NULL id makes the regulator core complain
+	 * "regulator request with no identifier" for every slot past the list.
+	 */
+	for (i = 0; i < ARRAY_SIZE(regulator_names) - 1; i++) {
+		const char *id = regulator_names[i];
 
 		kbdev->regulators[k] = regulator_get_optional(kbdev->dev, id);
 		if (IS_ERR(kbdev->regulators[k])) {
