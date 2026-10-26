@@ -99,14 +99,27 @@ static int pm_callback_soft_reset(struct kbase_device *kbdev)
  * (ref-counted) so the count stays balanced regardless of pm_clk
  * activity.  Same treatment for regulators.
  */
+/*
+ * Whether the GPU's clocks and regulators are held. The system suspend and
+ * resume callbacks run whatever the runtime state: a suspend with the GPU
+ * already runtime-suspended disabled nothing (the clock core only warns), and
+ * the resume then took a fresh reference, one more per cycle. On ums512 a
+ * held GPU clock keeps AON GPU_EB on, and with it the 26 MHz crystal through
+ * deep sleep. Turn on and off only on a change of state.
+ */
+static bool gpu_power_control_on;
+
 static void enable_gpu_power_control(struct kbase_device *kbdev)
 {
 	unsigned int i;
 
+	if (gpu_power_control_on)
+		return;
+
 #if defined(CONFIG_REGULATOR)
 	for (i = 0; i < kbdev->nr_regulators; i++) {
-		if (kbdev->regulators[i])
-			regulator_enable(kbdev->regulators[i]);
+		if (kbdev->regulators[i] && regulator_enable(kbdev->regulators[i]))
+			dev_warn(kbdev->dev, "failed to enable regulator %u\n", i);
 	}
 #endif
 
@@ -114,9 +127,10 @@ static void enable_gpu_power_control(struct kbase_device *kbdev)
 		if (kbdev->clocks[i])
 			clk_prepare_enable(kbdev->clocks[i]);
 	}
+	gpu_power_control_on = true;
 }
 
-static void disable_gpu_power_control(struct kbase_device *kbdev)
+static void disable_gpu_power_control_clocks(struct kbase_device *kbdev)
 {
 	unsigned int i;
 
@@ -124,6 +138,16 @@ static void disable_gpu_power_control(struct kbase_device *kbdev)
 		if (kbdev->clocks[i])
 			clk_disable_unprepare(kbdev->clocks[i]);
 	}
+}
+
+static void disable_gpu_power_control(struct kbase_device *kbdev)
+{
+	unsigned int i;
+
+	if (!gpu_power_control_on)
+		return;
+
+	disable_gpu_power_control_clocks(kbdev);
 
 #if defined(CONFIG_REGULATOR)
 	for (i = 0; i < kbdev->nr_regulators; i++) {
@@ -131,7 +155,7 @@ static void disable_gpu_power_control(struct kbase_device *kbdev)
 			regulator_disable(kbdev->regulators[i]);
 	}
 #endif
-
+	gpu_power_control_on = false;
 }
 
 static int pm_callback_power_on(struct kbase_device *kbdev)
@@ -276,6 +300,19 @@ static int kbase_device_runtime_init(struct kbase_device *kbdev)
 	 * before hardware is ready, leading to an SError on first register write.
 	 */
 	pm_runtime_set_suspended(kbdev->dev);
+
+	/*
+	 * power_control_init() enabled every clock at probe and keeps that
+	 * reference for good; with the runtime callbacks counting their own
+	 * on top, the clocks never reach zero. On ums512 three of them are
+	 * children of AON GPU_EB, so the GPU_TOP domain's power-off could never
+	 * gate it, and with GPU_EB on AP_SYS never reaches deep sleep. The
+	 * device starts out suspended: hand the probe's references back, and
+	 * the first pm_runtime_get_sync() takes its own.
+	 */
+	disable_gpu_power_control_clocks(kbdev);
+	gpu_power_control_on = false;
+
 	pm_runtime_enable(kbdev->dev);
 
 	if (!pm_runtime_enabled(kbdev->dev)) {
